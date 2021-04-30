@@ -54,17 +54,13 @@ namespace AudioPlayerConsole
                 var line = Console.ReadLine().ToLower();
 
                 if (line == "pause")
-                {
                     audioSamplePlayer.Pause();
-                }
+
                 if (line == "stop")
-                {
                     audioSamplePlayer.Stop();
-                }
+
                 if (line == "play")
-                {
                     audioSamplePlayer.Play();
-                }
 
                 if (line == "exit")
                     break;
