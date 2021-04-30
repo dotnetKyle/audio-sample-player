@@ -9,7 +9,6 @@ namespace AudioPlayerConsole
     class Program
     {
         static float currentVolume = 1.0f;
-        static PlaybackState currentPlaybackState = PlaybackState.Stopped;
         static AudioSamplePlayerService audioSamplePlayer;
 
         static void Main(string[] args)
@@ -37,17 +36,18 @@ namespace AudioPlayerConsole
             }
 
             audioSamplePlayer = new AudioSamplePlayerService(filePath, currentVolume);
-            
+            audioSamplePlayer.PositionChanged += AudioSamplePlayer_PositionChanged;
+            audioSamplePlayer.Started += AudioSamplePlayer_Started;
+            audioSamplePlayer.Stopped += AudioSamplePlayer_Stopped;
+            audioSamplePlayer.Paused += AudioSamplePlayer_Paused;
+
             Console.WriteLine("Audio File Loaded..");
 
-            audioSamplePlayer.Play(currentPlaybackState, currentVolume);
+            audioSamplePlayer.Play();
                 
-            currentPlaybackState = PlaybackState.Playing;
-
             Console.WriteLine("Current State: Playing");
             Console.Write("Enter a command:");
 
-            Task.Run(updateUI);
 
             while (true)
             {
@@ -56,17 +56,14 @@ namespace AudioPlayerConsole
                 if (line == "pause")
                 {
                     audioSamplePlayer.Pause();
-                    currentPlaybackState = PlaybackState.Paused;
                 }
                 if (line == "stop")
                 {
                     audioSamplePlayer.Stop();
-                    currentPlaybackState = PlaybackState.Stopped;
                 }
                 if (line == "play")
                 {
-                    audioSamplePlayer.Play(currentPlaybackState, currentVolume);
-                    currentPlaybackState = PlaybackState.Playing;
+                    audioSamplePlayer.Play();
                 }
 
                 if (line == "exit")
@@ -76,50 +73,47 @@ namespace AudioPlayerConsole
             audioSamplePlayer.Dispose();
         }
 
-        static string currentUiStatus = null;
-        static void updateUI()
+        static void AudioSamplePlayer_Paused(AudioSamplePlayer.Events.Paused e)
         {
-            while(true)
+            updateUiStatus("Paused");
+        }
+        static void AudioSamplePlayer_Stopped(AudioSamplePlayer.Events.Stopped e)
+        {
+            updateUiStatus("Stopped");
+        }
+        static void AudioSamplePlayer_Started(AudioSamplePlayer.Events.Started e)
+        {
+            updateUiStatus("Playing");
+        }
+        static void AudioSamplePlayer_PositionChanged(AudioSamplePlayer.Events.AudioPositionChanged e)
+        {
+            if(audioSamplePlayer.PlaybackState == PlaybackState.Stopped)
             {
-                System.Threading.Thread.Sleep(33);
-
-                string newUiStatus = "";
-                if(currentPlaybackState == PlaybackState.Playing)
-                {
-                    var position = TimeSpan.FromSeconds(audioSamplePlayer.GetPositionInSeconds());
-                    var length = TimeSpan.FromSeconds(audioSamplePlayer.GetLengthInSeconds());
-
-                    newUiStatus = $"Playing:{position.Minutes}:{position:ss}/{length.Minutes}:{length:ss}";
-                }
-                else if (currentPlaybackState == PlaybackState.Paused)
-                {
-                    var position = TimeSpan.FromSeconds(audioSamplePlayer.GetPositionInSeconds());
-                    var length = TimeSpan.FromSeconds(audioSamplePlayer.GetLengthInSeconds());
-
-                    newUiStatus = $"Paused:{position.Minutes}:{position:ss}/{length.Minutes}:{length:ss}";
-                }
-                else if (currentPlaybackState == PlaybackState.Stopped)
-                {
-                    newUiStatus = $"Stopped";
-                }
-
-                if (currentUiStatus != newUiStatus)
-                {
-                    var currentPosition = Console.GetCursorPosition();
-
-                    Console.CursorVisible = false;
-                    Console.SetCursorPosition(0, Console.CursorTop - 1);
-                    Console.Write(new string(' ', Console.BufferWidth));
-                    Console.SetCursorPosition(0, Console.CursorTop - 1);
-
-                    Console.WriteLine($"Current State: {newUiStatus}");
-
-                    Console.SetCursorPosition(currentPosition.Left, currentPosition.Top);
-                    Console.CursorVisible = true;
-
-                    currentUiStatus = newUiStatus;
-                }
+                updateUiStatus("Stopped");
             }
+            else if(audioSamplePlayer.PlaybackState == PlaybackState.Paused)
+            {
+                updateUiStatus($"Paused  - {e.Position.Minutes}:{e.Position:ss}/{e.Length.Minutes}:{e.Length:ss}");
+            }
+            else if(audioSamplePlayer.PlaybackState == PlaybackState.Playing)
+            {
+                updateUiStatus($"Playing - {e.Position.Minutes}:{e.Position:ss}/{e.Length.Minutes}:{e.Length:ss}");
+            }
+        }
+
+        static void updateUiStatus(string status)
+        {
+            var currentPosition = Console.GetCursorPosition();
+
+            Console.CursorVisible = false;
+            Console.SetCursorPosition(0, Console.CursorTop - 1);
+            Console.Write(new string(' ', Console.BufferWidth));
+            Console.SetCursorPosition(0, Console.CursorTop - 1);
+
+            Console.WriteLine(status);
+
+            Console.SetCursorPosition(currentPosition.Left, currentPosition.Top);
+            Console.CursorVisible = true;
         }
     }
 }

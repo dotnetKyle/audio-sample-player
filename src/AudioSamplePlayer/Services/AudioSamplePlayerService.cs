@@ -1,6 +1,7 @@
 ﻿using System;
-using NAudio;
 using NAudio.Wave;
+using AudioSamplePlayer.Events;
+using System.Threading.Tasks;
 
 namespace AudioSamplePlayer.Services
 {
@@ -11,15 +12,29 @@ namespace AudioSamplePlayer.Services
         string _filePath;
         float _currentVolume;
 
-        public AudioSamplePlayerService(string filepath, float volume)
+        public AudioSamplePlayerService(string filepath, float volume = 1.0f)
         {
             _currentVolume = volume;
             _filePath = filepath;
 
             PlaybackStopType = PlaybackStoppedTypes.EndOfFile;
+
+            // sends updates to the UI when there are any
+            Task.Run(backgroundAudioTimeTask);
         }
 
+        public PlaybackState PlaybackState 
+        { 
+            get 
+            {
+                if (_output == null)
+                    return PlaybackState.Stopped;
+                else
+                    return _output.PlaybackState;
+            } 
+        }
         public PlaybackStoppedTypes PlaybackStopType { get; set; }
+        public float CurrentVolumeLevel => _currentVolume;
 
         public enum PlaybackStoppedTypes
         {
@@ -41,7 +56,7 @@ namespace AudioSamplePlayer.Services
                 _audioFileReader.Dispose();
                 _audioFileReader = null;
             }
-
+            
             _audioFileReader = new AudioFileReader(_filePath) { Volume = _currentVolume };
         }
         private void initializeOutput()
@@ -57,88 +72,54 @@ namespace AudioSamplePlayer.Services
             _output.Init(new WaveChannel32(_audioFileReader) { PadWithZeroes = false });
         }
 
-        public void Play(PlaybackState playbackState, double currentVolumeLevel)
+        public void Play(PlaybackStartedBy playbackStartedBy = PlaybackStartedBy.User)
         {
-            if (playbackState == PlaybackState.Stopped || playbackState == PlaybackState.Paused)
+            if (PlaybackState == PlaybackState.Stopped || PlaybackState == PlaybackState.Paused)
             {
                 initializeIfNeeded();
 
                 _output.Play();
             }
 
-            _audioFileReader.Volume = (float)currentVolumeLevel;
+            _audioFileReader.Volume = CurrentVolumeLevel;
 
-            if (PlaybackResumed != null)
-            {
-                PlaybackResumed();
-            }
+            Started?.Invoke(new Started(playbackStartedBy));
         }
 
-        public void Stop()
+        public void Stop(StoppedBy playbackStoppedBy = StoppedBy.User)
         {
             if (_output != null)
             {
                 _output.Stop();
+                Stopped?.Invoke(new Stopped(playbackStoppedBy));
             }
         }
 
-        public void Pause()
+        public void Pause(PausedBy playbackPausedBy = PausedBy.User)
         {
             if (_output != null)
             {
                 _output.Pause();
 
-                if (PlaybackPaused != null)
-                {
-                    PlaybackPaused();
-                }
+                Paused?.Invoke(new Paused(playbackPausedBy));
             }
         }
 
-        public void TogglePlayPause(double currentVolumeLevel)
-        {
-            if (_output != null)
-            {
-                if (_output.PlaybackState == PlaybackState.Playing)
-                {
-                    Pause();
-                }
-                else
-                {
-                    Play(_output.PlaybackState, currentVolumeLevel);
-                }
-            }
-            else
-            {
-                Play(PlaybackState.Stopped, currentVolumeLevel);
-            }
-        }
-
-        public double GetLengthInSeconds()
-        {
-            if (_audioFileReader != null)
-            {
-                return _audioFileReader.TotalTime.TotalSeconds;
-            }
-            else
-            {
-                return 0;
-            }
-        }
-
-        public double GetPositionInSeconds()
-        {
-            return _audioFileReader != null ? _audioFileReader.CurrentTime.TotalSeconds : 0;
-        }
-
-        public float GetVolume()
-        {
-            if (_audioFileReader != null)
-            {
-                return _audioFileReader.Volume;
-            }
-            return 1;
-        }
+        //public double GetLengthInSeconds()
+        //{
+        //    if (_audioFileReader != null)
+        //    {
+        //        return _audioFileReader.TotalTime.TotalSeconds;
+        //    }
+        //    else
+        //    {
+        //        return 0;
+        //    }
+        //}
+        //public double GetPositionInSeconds()
+        //{
+        //    return _audioFileReader != null ? _audioFileReader.CurrentTime.TotalSeconds : 0;
+        //}
 
         public void SetPosition(double value)
         {
@@ -152,6 +133,7 @@ namespace AudioSamplePlayer.Services
         {
             if (_output != null)
             {
+                _currentVolume = value;
                 _audioFileReader.Volume = value;
             }
         }
@@ -159,15 +141,43 @@ namespace AudioSamplePlayer.Services
         private void _output_PlaybackStopped(object sender, StoppedEventArgs e)
         {
             Dispose();
-            if (PlaybackStopped != null)
+
+            if (Stopped != null && PlaybackState == PlaybackState.Playing || PlaybackState == PlaybackState.Paused)
+                Stopped.Invoke(new Stopped(StoppedBy.PlayerDisposed));
+        }
+
+        bool playerClosing = false;
+        double lastAudioPosition = -1;
+        double lastAudioLength = -1;
+        void backgroundAudioTimeTask()
+        {
+            // iterate until dispose is called
+            while(playerClosing == false)
             {
-                PlaybackStopped();
+                if(PositionChanged != null && _audioFileReader != null)
+                {
+                    var currentPosition = Math.Truncate(_audioFileReader.CurrentTime.TotalSeconds);
+                    var currentLength = Math.Truncate(_audioFileReader.TotalTime.TotalSeconds);
+
+                    if(currentPosition != lastAudioPosition || currentLength != lastAudioLength)
+                    {
+                        lastAudioPosition = currentPosition;
+                        lastAudioLength = currentLength;
+
+                        var tsPosition = TimeSpan.FromSeconds(currentPosition);
+                        var tsLength = TimeSpan.FromSeconds(currentLength);
+
+                        PositionChanged.Invoke(new AudioPositionChanged(tsPosition, tsLength));
+                    }
+                }
+
+                // sleep one frame
+                System.Threading.Thread.Sleep(33);
             }
         }
 
         #region Disposable Implementation
 
-        private bool disposing;
         public void Dispose()
         {
             Dispose(true);
@@ -175,6 +185,15 @@ namespace AudioSamplePlayer.Services
         }
         protected virtual void Dispose(bool disposing)
         {
+            if(disposing)
+            {
+                // free managed resources here
+                playerClosing = true;
+
+                // sleep one frame
+                System.Threading.Thread.Sleep(33);
+            }
+
             // free all unmanaged resources 
             if (_output != null)
             {
@@ -192,20 +211,18 @@ namespace AudioSamplePlayer.Services
                 _audioFileReader = null;
             }
 
-            if(disposing)
-            {
-                // free managed resources here
-            }
         }
         #endregion
 
-        public event Action PlaybackResumed; 
-        public event Action PlaybackStopped;
-        public event Action PlaybackPaused;
-
+        public event StartedEvent Started; 
+        public event StoppedEvent Stopped;
+        public event PausedEvent Paused;
+        public event AudioPositionChangedEvent PositionChanged;
+        
         ~AudioSamplePlayerService()
         {
             Dispose(false);
         }
     }
+
 }
